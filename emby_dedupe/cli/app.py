@@ -120,6 +120,29 @@ def _libraries_from_env() -> list[str]:
 # dedupe subcommand
 # ---------------------------------------------------------------------------
 
+def _apply_fold_safe_results_to_decisions(decisions, results) -> None:
+    """Write each fold-safe outcome back onto its decision item's ``deletion_result``.
+
+    The guard sets ``skipped_unsafe`` when it refuses the Emby delete; fold-safe may then
+    remove the file over SSH. Only a real removal changes the verdict — ``needs_review``,
+    ``skipped`` and ``failed`` all leave the guard's refusal standing, which is accurate:
+    the file is still there. Matched by item id, falling back to the delete path for items
+    whose id is missing.
+    """
+    by_id = {r.get("id"): r for r in results if r.get("id")}
+    by_path = {r.get("delete"): r for r in results if r.get("delete")}
+    for decision in decisions or []:
+        for item in decision.get("delete", []) or []:
+            result = by_id.get(item.get("id")) or by_path.get(item.get("path"))
+            if not result or result.get("status") != "removed":
+                continue
+            item["deletion_result"] = {
+                "id": item.get("id"),
+                "status": "fold_safe_removed",
+                "error": None,
+            }
+
+
 def _run_fold_safe_delete(client, base_url, decisions, doit, ssh_host) -> None:
     """Remove guard-refused co-located duplicates by file-deleting them on the media host.
 
@@ -152,6 +175,11 @@ def _run_fold_safe_delete(client, base_url, decisions, doit, ssh_host) -> None:
         len(plans) - review_count, "remove" if doit else "preview", ssh_host, review_count,
     )
     results = execute_fold_safe_deletes(plans, ssh_host=ssh_host, doit=doit)
+
+    # Record each outcome back onto the decision item so the HTML/markdown report shows
+    # what actually happened. Without this the report keeps the guard's "blocked" verdict
+    # for a file that fold-safe removed seconds later — permanently mis-recording the run.
+    _apply_fold_safe_results_to_decisions(decisions, results)
 
     for r in results:
         logger.info("  [%s] %s", r["status"], r["delete"])
@@ -285,20 +313,25 @@ def dedupe_cmd(
 
         all_provider_tables = _connect_and_fetch_libraries(client, base_url, resolved.library)
 
-        decisions, exclusion_metadata, markdown_report = _run_deduplication_pipeline(
+        decisions, exclusion_metadata, _pipeline_markdown = _run_deduplication_pipeline(
             client, base_url, all_provider_tables, resolved.excluded_ids,
             resolved.lang_priorities, resolved.api_key, resolved.doit,
             resolved.username, resolved.password,
         )
 
-        _generate_reports(
-            base_url, decisions, exclusion_metadata, resolved.excluded_ids,
-            resolved.lang_priorities, markdown_report,
-            resolved.html_report, resolved.html_only, resolved.no_open,
-        )
-
+        # Fold-safe runs BEFORE the report: it removes guard-refused duplicates over SSH
+        # and records the outcome on the decisions. Reporting first would freeze the
+        # guard's "blocked" verdict into the report for files that were then removed.
+        # (The pipeline's markdown is discarded for the same reason — _generate_reports
+        # re-renders it from the final decisions.)
         if fold_safe_delete:
             _run_fold_safe_delete(client, base_url, decisions, resolved.doit, fold_safe_host)
+
+        _generate_reports(
+            base_url, decisions, exclusion_metadata, resolved.excluded_ids,
+            resolved.lang_priorities,
+            resolved.html_report, resolved.html_only, resolved.no_open,
+        )
 
     except EmbyServerConnectionError as e:
         logger.error(str(e))

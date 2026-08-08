@@ -201,6 +201,13 @@ h3 {
     color: var(--warning);
 }
 
+/* Safety-guard refusal: a deliberate, protective outcome — not an error and not
+   "nothing happened yet". Rendered bold so it stands out from a dry run's "Pending". */
+.status-blocked {
+    color: var(--warning);
+    font-weight: 600;
+}
+
 .url-link {
     display: inline-block;
     margin-top: 5px;

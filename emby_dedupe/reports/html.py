@@ -137,6 +137,10 @@ def _process_delete_item(item: dict[str, Any], base_url: str, keep_serverid: str
     deletion_status = item.get('deletion_result', {})
     status = deletion_status.get('status', 'not_attempted')
 
+    # "Pending" is the fallback for a dry run (nothing was attempted). Every status the
+    # run actually produced gets its own label — a guard refusal in particular must NOT
+    # read as "Pending", which looks like "nothing happened yet" when the truth is
+    # "deliberately refused to protect the keeper".
     status_class = "status-pending"
     status_text = "Pending"
     if status == "success":
@@ -145,6 +149,12 @@ def _process_delete_item(item: dict[str, Any], base_url: str, keep_serverid: str
     elif status == "failed":
         status_class = "status-error"
         status_text = "Failed"
+    elif status == "skipped_unsafe":
+        status_class = "status-blocked"
+        status_text = "Blocked by safety guard (both files kept)"
+    elif status == "fold_safe_removed":
+        status_class = "status-success"
+        status_text = "Deleted (file-only, fold-safe)"
 
     # Create URL for this item
     item_url = f"{base_url}/web/index.html#!/item?id={item['id']}&serverId={keep_serverid}"

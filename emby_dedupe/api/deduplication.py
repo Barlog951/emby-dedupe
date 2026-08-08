@@ -1377,10 +1377,15 @@ def _execute_one_deletion(
         # Pre-format into ONE f-string with no positional args, so logging never runs
         # ``msg % args`` (immune to stray % in paths or an arg-count mismatch — this line
         # crashed twice before via stale bytecode).
-        logger.error(
-            f"SAFETY GUARD blocked deletion of id={item['id']} — {reason} "
+        # WARNING, not ERROR: refusing is the guard working as designed, and nothing has
+        # failed. Logging it at ERROR made correct, protective behaviour look like a fault.
+        # The wording must not promise "both files kept" either — with --fold-safe-delete
+        # the duplicate is removed file-only moments later, which made this line false.
+        logger.warning(
+            f"SAFETY GUARD blocked the Emby delete of id={item['id']} — {reason} "
             f"(delete={item.get('path')!r} keeper={keeper_path!r}). "
-            "Both files kept; resolve the layout manually."
+            "Keeper protected. The duplicate is still on disk: --fold-safe-delete removes "
+            "it file-only, otherwise resolve the layout manually."
         )
         item["deletion_result"] = {
             "id": item["id"], "status": "skipped_unsafe", "error": reason,

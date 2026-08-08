@@ -22,7 +22,7 @@ from emby_dedupe.cli.arguments import (
     get_env_variable,
 )
 from emby_dedupe.reports.html import generate_html_report
-from emby_dedupe.reports.markdown import output_report_to_stdout
+from emby_dedupe.reports.markdown import format_markdown_table, output_report_to_stdout
 from emby_dedupe.utils.constants import (
     ENV_DEDUPE_EMBY_PASSWORD,
     ENV_DEDUPE_EMBY_USERNAME,
@@ -290,23 +290,31 @@ def _run_deduplication_pipeline(client, base_url, all_provider_tables, excluded_
 
 
 def _generate_reports(base_url, decisions, exclusion_metadata, excluded_ids,
-                     lang_priorities, markdown_report, html_report, html_only, no_open):
+                     lang_priorities, html_report, html_only, no_open):
     """
     Generate and output reports (markdown and/or HTML).
 
+    The markdown report is rendered HERE rather than taken as an argument. The pipeline
+    renders one during the deletion pass, but that happens before the fold-safe pass can
+    remove any guard-refused duplicate — passing it in would print a file as blocked when
+    it was actually removed. Rendering from the final ``decisions`` keeps the console
+    output and the HTML in agreement.
+
     Args:
         base_url: Emby server base URL.
-        decisions: Deduplication decisions.
+        decisions: Deduplication decisions (final — after any fold-safe removals).
         exclusion_metadata: Metadata about exclusions.
         excluded_ids: IDs that were excluded.
         lang_priorities: Language priorities list.
-        markdown_report: Generated markdown report.
         html_report: Whether to generate HTML report.
         html_only: Whether to only output HTML (skip console).
         no_open: Whether to skip opening browser.
     """
     # Create metadata dictionary for report generation
     report_metadata = _build_report_metadata(excluded_ids, lang_priorities, exclusion_metadata)
+
+    # Pure function of `decisions` — no I/O, safe to (re-)render at this point.
+    markdown_report = format_markdown_table(base_url, decisions, report_metadata)
 
     if html_report:
         try:
