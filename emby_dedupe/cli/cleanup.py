@@ -209,13 +209,17 @@ def _perform_deletions(
     # and gate each delete on the same guard the dedup path uses.
     known_paths = fetch_all_media_paths(client, base_url)
     delete_paths = [c.path for c in candidates if getattr(c, "path", None)]
+    # A series candidate's path is a FOLDER Emby owns as one item, not a media file, so it
+    # needs the container rule rather than the file one (which refused 100% of series).
+    is_series = label == "series"
 
     logger.info(f"Deleting {len(candidates)} {label} candidates...")
     with tqdm(candidates, desc=f"Deleting {label}", unit=label.rstrip("s")) as progress:
         for candidate in progress:
             progress.set_postfix_str(candidate.name[:40])
             safe, reason = is_cleanup_delete_safe(
-                getattr(candidate, "path", None), known_paths, delete_paths
+                getattr(candidate, "path", None), known_paths, delete_paths,
+                delete_is_container=is_series,
             )
             if not safe:
                 candidate.deletion_result = {"status": "skipped_unsafe", "error": reason}

@@ -148,8 +148,49 @@ def collect_delete_paths(decisions) -> list:
     return paths
 
 
+# A series folder must sit at least this deep to be deletable. Guards against a
+# mis-constructed candidate handing us a library root (e.g. "/Movies/Serials") and
+# green-lighting removal of an ENTIRE library. Real series live at
+# /Movies/Serials/--- UKONCENE ---/<Show> (5 components), so 4 is generous while still
+# rejecting the catastrophic shapes.
+_MIN_CONTAINER_DEPTH = 4
+
+
+def _is_container_delete_safe(dp: str) -> tuple[bool, str]:
+    """Decide whether deleting a FOLDER-backed item (a Series) is safe.
+
+    PROVEN LIVE 2026-08-18 on emby-gpu with a throwaway library: deleting a Series item
+    removes **exactly that series' own folder** and nothing else — a sibling series in the
+    same container, and the container itself, were both untouched. So the only media at
+    risk is what lives inside the series folder, which is precisely what the run intends
+    to delete.
+
+    The file-based reasoning in :func:`is_cleanup_delete_safe` cannot express that. For a
+    file, ``dirname(path)`` is the folder Emby may fold-delete; for a series folder it
+    climbs one level too far — to the LIBRARY container
+    (e.g. ``/Movies/Serials/--- UKONCENE ---``). That container's direct children are
+    folders, never media files, so the direct-children survivor test found nothing every
+    single time and refused **every** series: 4 of 4 on the 2026-08-18 run (50.94 GB), and
+    every run before it. Series cleanup had never once been able to delete anything.
+    """
+    depth = len([part for part in dp.split("/") if part])
+    if depth < _MIN_CONTAINER_DEPTH:
+        return (
+            False,
+            f"refusing to delete {dp!r}: too shallow to be a series folder "
+            f"({depth} path components, need >= {_MIN_CONTAINER_DEPTH}) — this looks like "
+            "a library root, and deleting it would remove the whole library",
+        )
+    return (
+        True,
+        f"series folder ({dp!r}) — Emby removes only this folder; siblings in the same "
+        "container are unaffected (proven live 2026-08-18)",
+    )
+
+
 def is_cleanup_delete_safe(
-    delete_path: str | None, known_paths, delete_paths=None
+    delete_path: str | None, known_paths, delete_paths=None,
+    delete_is_container: bool = False,
 ) -> tuple[bool, str]:
     """Decide whether deleting ``delete_path`` can destroy media the run is KEEPING.
 
@@ -169,6 +210,9 @@ def is_cleanup_delete_safe(
             full visibility a shared folder can look dedicated and the guard over-refuses.
         delete_paths: every path being deleted in THIS run, so a same-folder sibling that
             is itself a target does not count as a survivor.
+        delete_is_container: True when ``delete_path`` is a FOLDER Emby owns as one item
+            (a Series) rather than a media file. The file-based reasoning below is simply
+            wrong for those — see :func:`_is_container_delete_safe`.
 
     Returns:
         (safe, reason). ``safe`` False means refuse the Emby delete — it would fold-delete
@@ -177,6 +221,9 @@ def is_cleanup_delete_safe(
     dp = _norm(delete_path)
     if not dp:
         return True, "no delete path — nothing to reason about"
+
+    if delete_is_container:
+        return _is_container_delete_safe(dp)
 
     ddir = posixpath.dirname(dp)
     delete_set = {_norm(p) for p in (delete_paths or [])}

@@ -62,6 +62,10 @@
         .badge-deleted     { background: rgba(80,250,123,0.2);   color: #50fa7b; border: 1px solid #50fa7b; }
         .badge-failed      { background: rgba(255,85,85,0.2);    color: #ff5555; border: 1px solid #ff5555; }
         .badge-dryrun      { background: rgba(180,180,180,0.12); color: #aaa;    border: 1px solid #555; }
+        .badge-blocked     { background: rgba(255,184,108,0.2);  color: #ffb86c; border: 1px solid #ffb86c; font-weight: 600; }
+        .cleanup-blocked-reason { margin-top: 6px; font-size: 0.85rem; color: #ffb86c;
+                                  background: rgba(255,184,108,0.08); border-left: 3px solid #ffb86c;
+                                  padding: 6px 10px; border-radius: 3px; word-break: break-word; }
         .badge-episodes    { background: rgba(255,184,108,0.15); color: #ffb86c; border: 1px solid #ffb86c; }
         .cleanup-path { font-size: 0.78em; color: #666; margin-top: 8px; word-break: break-all; }
         .cleanup-links { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -309,8 +313,16 @@
                     <span class="badge badge-deleted">&#10003; Deleted</span>
                     {% elif c.deletion_result.status == "failed" %}
                     <span class="badge badge-failed">&#10007; Failed</span>
+                    {% elif c.deletion_result.status == "skipped_unsafe" %}
+                    {# A safety-guard refusal is a deliberate protective outcome. Rendering
+                       it as a bare grey "Skipped" made it read like a dry run — the reason
+                       was recorded but never shown, so the cause stayed invisible. #}
+                    <span class="badge badge-blocked" title="{{ c.deletion_result.error }}">&#9888; Blocked by safety guard</span>
                     {% else %}
                     <span class="badge badge-dryrun">Skipped</span>
+                    {% endif %}
+                    {% if c.deletion_result.status == "skipped_unsafe" and c.deletion_result.error %}
+                    <div class="cleanup-blocked-reason">{{ c.deletion_result.error }}</div>
                     {% endif %}
                 {% elif not doit %}
                 <span class="badge badge-dryrun">Dry-run</span>
@@ -371,8 +383,16 @@
                     <span class="badge badge-deleted">&#10003; Deleted</span>
                     {% elif c.deletion_result.status == "failed" %}
                     <span class="badge badge-failed">&#10007; Failed</span>
+                    {% elif c.deletion_result.status == "skipped_unsafe" %}
+                    {# A safety-guard refusal is a deliberate protective outcome. Rendering
+                       it as a bare grey "Skipped" made it read like a dry run — the reason
+                       was recorded but never shown, so the cause stayed invisible. #}
+                    <span class="badge badge-blocked" title="{{ c.deletion_result.error }}">&#9888; Blocked by safety guard</span>
                     {% else %}
                     <span class="badge badge-dryrun">Skipped</span>
+                    {% endif %}
+                    {% if c.deletion_result.status == "skipped_unsafe" and c.deletion_result.error %}
+                    <div class="cleanup-blocked-reason">{{ c.deletion_result.error }}</div>
                     {% endif %}
                 {% elif not doit %}
                 <span class="badge badge-dryrun">Dry-run</span>
