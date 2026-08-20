@@ -72,9 +72,15 @@ def test_loose_singleton_without_known_siblings_is_conservatively_refused():
 
 # --- degenerate inputs ---------------------------------------------------------------
 def test_missing_paths_do_not_crash():
-    assert is_delete_safe("", "", [])[0] is True
-    assert is_delete_safe(None, MOVIE_P5, [])[0] is True   # no keeper to protect → allow
-    assert is_delete_safe(MOVIE_KEEP_SIBLING, None, [])[0] is True  # no delete path → nothing to do
+    # An unknown DELETE path is REFUSED (changed 2026-08-20). Without it the guard cannot
+    # evaluate any of its rules, so allowing was the guard silently switching itself off —
+    # 3 of 15 deletes went through unguarded on the 2026-08-20 run because Emby returned
+    # no Path. Refusing costs one deferred delete; allowing costs a keeper.
+    assert is_delete_safe("", "", [])[0] is False
+    assert is_delete_safe(MOVIE_KEEP_SIBLING, None, [])[0] is False
+    # An unknown KEEPER path still allows: there is no identified keeper to protect, and
+    # the delete path is known so the caller's other rules still applied.
+    assert is_delete_safe(None, MOVIE_P5, [])[0] is True
 
 
 def test_windows_style_paths_normalised():
@@ -387,8 +393,14 @@ class TestCleanupDeleteGuard:
         safe, _ = is_cleanup_delete_safe(a, [a, b, keep], [a, b])
         assert not safe
 
-    def test_missing_path_is_not_blocked(self):
+    def test_missing_path_is_refused(self):
+        """Changed 2026-08-20: an unusable path is refused, not waved through.
+
+        It used to return safe, which meant a candidate whose Path Emby did not return
+        was deleted with no fold check at all.
+        """
         from emby_dedupe.api.deletion_guard import is_cleanup_delete_safe
 
-        assert is_cleanup_delete_safe(None, [], [])[0] is True
-        assert is_cleanup_delete_safe("", ["/x/y.mkv"], [])[0] is True
+        assert is_cleanup_delete_safe(None, [], [])[0] is False
+        assert is_cleanup_delete_safe("", ["/x/y.mkv"], [])[0] is False
+        assert is_cleanup_delete_safe("unknown", ["/x/y.mkv"], [])[0] is False

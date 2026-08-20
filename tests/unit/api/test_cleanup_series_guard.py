@@ -66,15 +66,16 @@ def test_a_library_root_is_never_deletable():
         assert not safe, f"{root!r} must never be deletable as a container"
 
 
-def test_empty_path_keeps_the_pre_existing_contract():
-    """An absent path returns safe — unchanged, and shared with the movie path.
+def test_absent_path_is_refused_even_for_a_container():
+    """Superseded 2026-08-18 -> 2026-08-20.
 
-    Pinned deliberately: it means a candidate with no ``path`` bypasses the guard and is
-    deleted by item id. That predates this change and applies to movies too, so it is not
-    touched here — but it should not drift silently either.
+    This originally pinned "absent path returns safe" as a pre-existing contract, with a
+    note that it let a candidate with no ``path`` bypass the guard entirely. Two days
+    later that exact bypass fired on a live run, so the contract was inverted rather than
+    documented: no usable path now means refuse, on both the movie and container branches.
     """
-    assert is_cleanup_delete_safe("", KNOWN, [], delete_is_container=True)[0] is True
-    assert is_cleanup_delete_safe(None, KNOWN, [], delete_is_container=True)[0] is True
+    assert is_cleanup_delete_safe("", KNOWN, [], delete_is_container=True)[0] is False
+    assert is_cleanup_delete_safe(None, KNOWN, [], delete_is_container=True)[0] is False
 
 
 def test_movies_keep_the_file_based_rules():
@@ -112,3 +113,26 @@ def test_cli_passes_the_container_flag_for_series_only():
 
     assert 'is_series = label == "series"' in src
     assert "delete_is_container=is_series" in src
+
+
+def test_unknown_delete_path_is_refused_not_waved_through():
+    """Regression for the 2026-08-20 silent bypass.
+
+    Emby returned no ``Path`` for 3 of 15 delete items (the report rendered "unknown").
+    The guard's old "no delete path -> nothing to reason about -> safe" turned those into
+    unguarded deletes: no fold check, no warning, no log. They happened to sit in a season
+    folder (file-only, harmless), but the same item in a per-title movie folder next to its
+    keeper is exactly the Marty Supreme data loss.
+    """
+    from emby_dedupe.api.deletion_guard import is_delete_safe
+
+    keeper = "/Movies/4K/Some Movie (2024)/Some Movie (2024) - 2160p.mkv"
+
+    for missing in (None, "", "   "):
+        safe, reason = is_delete_safe(keeper, missing, [keeper])
+        assert not safe, f"delete path {missing!r} must be refused, not waved through"
+        assert "unknown" in reason
+
+    # cleanup path shares the helper, so it must refuse too
+    safe, _ = is_cleanup_delete_safe(None, KNOWN, [])
+    assert not safe

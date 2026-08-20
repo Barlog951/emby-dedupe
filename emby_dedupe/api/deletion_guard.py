@@ -23,7 +23,20 @@ def _norm(path: str | None) -> str:
     """Normalise a path for comparison (forward slashes, no trailing slash)."""
     if not path:
         return ""
-    return path.replace("\\", "/").rstrip("/")
+    return path.strip().replace("\\", "/").rstrip("/")
+
+
+def _is_usable_path(path: str) -> bool:
+    """True only if ``path`` is something the guard can actually reason about.
+
+    A normalised path must contain a separator to have a parent directory — and the
+    parent directory is the entire basis of every fold-delete rule here. Anything else
+    (empty, whitespace, or the literal ``"unknown"`` that
+    :mod:`emby_dedupe.api.metadata` substitutes when Emby returns no ``Path``) yields
+    ``dirname() == ""``, which silently matches nothing and lets a delete through
+    unchecked.
+    """
+    return "/" in path
 
 
 def _under(path: str | None, folder: str | None) -> bool:
@@ -62,8 +75,17 @@ def is_delete_safe(
         because it would fold-delete a folder containing the keeper.
     """
     dp, kp = _norm(delete_path), _norm(keeper_path)
-    if not dp:
-        return True, "no delete path — nothing to reason about"
+    if not _is_usable_path(dp):
+        # REFUSE, not allow. Without the delete path this function cannot evaluate a
+        # single one of its rules, so "allow" was never a verdict — it was the guard
+        # silently switching itself off. Hit live 2026-08-20: 3 of 15 deletes ran with
+        # Path missing from Emby (rendered "unknown" in the report) and were removed with
+        # NO fold protection at all. Harmless that time (season folder → file-only), but
+        # the same item in a per-title movie folder beside its keeper is the Marty Supreme
+        # data loss, with no guard, no warning and no log entry.
+        # Cheap to refuse: a 61k-item library scan found 0 items lacking Path, so this is
+        # transient (an item caught mid-scan). The delete simply happens on the next run.
+        return False, "delete path unknown — cannot verify fold safety, refusing"
     if not kp:
         return True, "no keeper path to protect"
 
@@ -219,8 +241,11 @@ def is_cleanup_delete_safe(
         a directory containing media that is meant to survive.
     """
     dp = _norm(delete_path)
-    if not dp:
-        return True, "no delete path — nothing to reason about"
+    if not _is_usable_path(dp):
+        # Same reasoning as is_delete_safe: no usable path means no rule can be evaluated,
+        # so allowing would be the guard switching itself off rather than clearing the
+        # delete. See the 2026-08-20 note there.
+        return False, "delete path unknown — cannot verify fold safety, refusing"
 
     if delete_is_container:
         return _is_container_delete_safe(dp)
