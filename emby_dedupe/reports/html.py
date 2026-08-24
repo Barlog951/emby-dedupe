@@ -181,6 +181,22 @@ def _process_delete_item(item: dict[str, Any], base_url: str, keep_serverid: str
     }
 
 
+def _item_path(item: dict[str, Any]) -> str:
+    """The item's filesystem path for display, preferring the authoritative field.
+
+    ``quality_description`` is built per-item from the details fetch and can come back
+    empty (no codec, no size, no date, no path) when Emby returns a sparse record. Reading
+    the path only from there then printed "unknown" for an item whose real path was known
+    all along — the top-level ``path`` is the field the deletion guard actually uses.
+
+    That mismatch is not cosmetic: on 2026-08-20 a report showing "unknown" was read as
+    evidence that deletes had run with the guard bypassed, when the guard had in fact seen
+    a valid path and evaluated normally. The report is the audit artifact, so it must show
+    the same path the guard reasoned about.
+    """
+    return item.get("quality_description", {}).get("path") or item.get("path") or "unknown"
+
+
 def _process_decision_group(decision: dict[str, Any], base_url: str) -> dict[str, Any]:
     """
     Process a single decision group into template-friendly format.
@@ -243,10 +259,10 @@ def _process_decision_group(decision: dict[str, Any], base_url: str) -> dict[str
         "delete": processed_delete_items,
         "has_deleted_items": has_deleted_items,
         "newest_date_added": newest_item['quality_description'].get('date_added', 'unknown'),
-        "newest_path": newest_item['quality_description'].get('path', 'unknown'),
+        "newest_path": _item_path(newest_item),
         "newest_status": "✓ This file is being kept" if newest_item['id'] == keep_item['id'] else "⚠️ This newer file is being deleted!",
         "oldest_date_added": oldest_item['quality_description'].get('date_added', 'unknown'),
-        "oldest_path": oldest_item['quality_description'].get('path', 'unknown'),
+        "oldest_path": _item_path(oldest_item),
         "oldest_status": "✓ This file is being kept despite being older" if oldest_item['id'] == keep_item['id'] else "",
         "selected_by_language": selected_by_language,
         "changed_by_language_priority": changed_by_language,

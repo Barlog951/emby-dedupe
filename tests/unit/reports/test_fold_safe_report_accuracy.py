@@ -156,3 +156,40 @@ def test_fold_safe_runs_before_the_report_is_generated():
         "_generate_reports() must run AFTER _run_fold_safe_delete(), otherwise the report "
         "records the guard's 'blocked' verdict for duplicates fold-safe then removed."
     )
+
+
+def test_report_shows_the_path_the_guard_actually_used():
+    """Regression for 2026-08-25.
+
+    ``quality_description`` can come back empty when Emby returns a sparse record. The
+    report read the path only from there, so it printed "unknown" for an item whose real
+    path was known — the top-level ``path`` the deletion guard reasons about.
+
+    That misled a live audit: a report showing "unknown" was taken as evidence that
+    deletes had bypassed the guard, when the guard had seen a valid path all along.
+    """
+    from emby_dedupe.reports.html import _item_path
+
+    real = "/Movies/HD/Show/S01/Show S01E13.mkv"
+
+    # sparse quality_description -> fall back to the authoritative top-level path
+    assert _item_path({"path": real, "quality_description": {}}) == real
+    assert _item_path({"path": real, "quality_description": {"path": ""}}) == real
+    # quality_description path still wins when present
+    assert _item_path({"path": "/other.mkv", "quality_description": {"path": real}}) == real
+    # genuinely unknown stays unknown
+    assert _item_path({"quality_description": {}}) == "unknown"
+
+
+def test_rendered_report_prefers_the_real_path_over_unknown():
+    """End-to-end: the sparse-metadata item must not render as 'unknown'."""
+    real = "/Movies/HD/Show/S01/Show S01E13.mkv"
+    decisions = _decision("success")
+    # simulate Emby returning a sparse record for the delete item
+    decisions[0]["delete"][0]["quality_description"] = {}
+    decisions[0]["delete"][0]["path"] = real
+
+    html = _render(decisions)
+
+    assert real in html
+    assert "<strong>Path:</strong> unknown" not in html
