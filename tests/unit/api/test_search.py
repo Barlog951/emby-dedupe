@@ -71,12 +71,7 @@ class TestSearchByName:
             ]
         }
 
-        results = search_by_name(
-            mock_client,
-            "http://emby.local",
-            "api_key",
-            "The Matrix"
-        )
+        results = search_by_name(mock_client, "http://emby.local", "api_key", "The Matrix")
 
         assert len(results) == 2
         assert results[0]["Name"] == "The Matrix"
@@ -91,12 +86,7 @@ class TestSearchByName:
             ]
         }
 
-        results = search_by_name(
-            mock_client,
-            "http://emby.local",
-            "api_key",
-            "The Matrix"
-        )
+        results = search_by_name(mock_client, "http://emby.local", "api_key", "The Matrix")
 
         assert len(results) == 1
         assert results[0]["Name"] == "The Matrix"
@@ -104,15 +94,14 @@ class TestSearchByName:
     def test_search_by_name_handles_error(self):
         """Test that search_by_name handles HTTP errors."""
         import httpx
+
         mock_client = Mock()
 
-        with patch("emby_dedupe.api.search.make_http_request", side_effect=httpx.HTTPError("Connection error")):
-            results = search_by_name(
-                mock_client,
-                "http://emby.local",
-                "api_key",
-                "The Matrix"
-            )
+        with patch(
+            "emby_dedupe.api.search.make_http_request",
+            side_effect=httpx.HTTPError("Connection error"),
+        ):
+            results = search_by_name(mock_client, "http://emby.local", "api_key", "The Matrix")
 
         assert results == []
 
@@ -128,11 +117,7 @@ class TestSearchByProviderId:
         }
 
         results = search_by_provider_id(
-            mock_client,
-            "http://emby.local",
-            "api_key",
-            "tt0133093",
-            "imdb"
+            mock_client, "http://emby.local", "api_key", "tt0133093", "imdb"
         )
 
         assert len(results) == 1
@@ -148,7 +133,7 @@ class TestSearchByProviderId:
             "http://emby.local",
             "api_key",
             "123",
-            "imdb"  # lowercase
+            "imdb",  # lowercase
         )
 
         # Check that the call was made with normalized provider type
@@ -165,9 +150,7 @@ class TestSearchTvEpisode:
 
         # Mock series search
         series_response = Mock()
-        series_response.json.return_value = {
-            "Items": [{"Name": "Breaking Bad", "Id": "series123"}]
-        }
+        series_response.json.return_value = {"Items": [{"Name": "Breaking Bad", "Id": "series123"}]}
 
         # Mock episode search
         episode_response = Mock()
@@ -243,12 +226,7 @@ class TestGetLibraryIdsByName:
             {"ItemId": "lib2", "Name": "TV Shows"},
         ]
 
-        results = get_library_ids_by_name(
-            mock_client,
-            "http://emby.local",
-            "api_key",
-            ["Movies"]
-        )
+        results = get_library_ids_by_name(mock_client, "http://emby.local", "api_key", ["Movies"])
 
         assert results == ["lib1"]
 
@@ -263,7 +241,7 @@ class TestGetLibraryIdsByName:
             mock_client,
             "http://emby.local",
             "api_key",
-            ["movies"]  # lowercase
+            ["movies"],  # lowercase
         )
 
         assert results == ["lib1"]
@@ -280,11 +258,7 @@ class TestSearchMedia:
         }
 
         results = search_media(
-            mock_client,
-            "http://emby.local",
-            "api_key",
-            name="The Matrix",
-            imdb="tt0133093"
+            mock_client, "http://emby.local", "api_key", name="The Matrix", imdb="tt0133093"
         )
 
         assert len(results) == 1
@@ -299,11 +273,7 @@ class TestSearchMedia:
         }
 
         results = search_media(
-            mock_client,
-            "http://emby.local",
-            "api_key",
-            name="The Matrix",
-            year=1999
+            mock_client, "http://emby.local", "api_key", name="The Matrix", year=1999
         )
 
         assert len(results) >= 0  # May or may not match after filtering
@@ -314,9 +284,7 @@ class TestSearchMedia:
 
         # Mock series search
         series_response = Mock()
-        series_response.json.return_value = {
-            "Items": [{"Name": "Breaking Bad", "Id": "series123"}]
-        }
+        series_response.json.return_value = {"Items": [{"Name": "Breaking Bad", "Id": "series123"}]}
 
         # Mock episode search
         episode_response = Mock()
@@ -327,12 +295,116 @@ class TestSearchMedia:
         mock_client.request.side_effect = [series_response, episode_response]
 
         results = search_media(
-            mock_client,
-            "http://emby.local",
-            "api_key",
-            name="Breaking Bad",
-            season=1,
-            episode=1
+            mock_client, "http://emby.local", "api_key", name="Breaking Bad", season=1, episode=1
         )
 
         assert len(results) == 1
+
+
+class TestSelectSeriesCandidate:
+    """Regression: 'Malcolm in the Middle' must never resolve to 'The Middle' (2026-08-29).
+
+    Emby's SearchTerm returned only the unrelated show and containment matching accepted
+    it, so 149/151 episodes of a season pack were dropped as duplicates.
+    """
+
+    MALCOLM = {"name": "Malcolm in the Middle", "year": 2000, "imdb": "tt0212671"}
+    THE_MIDDLE = {
+        "Name": "The Middle",
+        "Id": "3564656",
+        "ProductionYear": 2009,
+        "ProviderIds": {"Imdb": "tt1442464", "Tmdb": "1422"},
+    }
+
+    def test_malcolm_rejects_the_middle_on_provider_conflict(self):
+        from emby_dedupe.api.search import select_series_candidate
+
+        assert (
+            select_series_candidate("Malcolm in the Middle", [self.THE_MIDDLE], imdb="tt0212671")
+            is None
+        )
+
+    def test_malcolm_rejects_the_middle_on_year_conflict_without_ids(self):
+        from emby_dedupe.api.search import select_series_candidate
+
+        candidate = {"Name": "The Middle", "Id": "x", "ProductionYear": 2009}
+        assert select_series_candidate("Malcolm in the Middle", [candidate], year=2000) is None
+
+    def test_containment_without_any_conflict_still_matches(self):
+        """Legit containment (brand prefix) keeps working when nothing contradicts it."""
+        from emby_dedupe.api.search import select_series_candidate
+
+        candidate = {"Name": "Marvel's Daredevil", "Id": "d", "ProductionYear": 2015}
+        assert select_series_candidate("Daredevil", [candidate], year=2015) is candidate
+        assert select_series_candidate("Daredevil", [candidate]) is candidate
+
+    def test_year_tolerance_of_one(self):
+        from emby_dedupe.api.search import select_series_candidate
+
+        candidate = {"Name": "Marvel's Daredevil", "Id": "d", "ProductionYear": 2015}
+        assert select_series_candidate("Daredevil", [candidate], year=2016) is candidate
+        assert select_series_candidate("Daredevil", [candidate], year=2017) is None
+
+    def test_exact_title_preferred_over_containment(self):
+        from emby_dedupe.api.search import select_series_candidate
+
+        fuzzy = {"Name": "The Middle", "Id": "f"}
+        exact = {"Name": "Malcolm in the Middle", "Id": "e"}
+        assert select_series_candidate("Malcolm in the Middle", [fuzzy, exact]) is exact
+
+    def test_exact_title_with_conflicting_id_is_still_rejected(self):
+        """Same-title remakes: an exact title carrying another IMDb id is a different show."""
+        from emby_dedupe.api.search import select_series_candidate
+
+        remake = {"Name": "Battlestar Galactica", "Id": "r", "ProviderIds": {"Imdb": "tt0407362"}}
+        assert select_series_candidate("Battlestar Galactica", [remake], imdb="tt0076984") is None
+
+    def test_matching_provider_id_is_accepted(self):
+        from emby_dedupe.api.search import select_series_candidate
+
+        same = {"Name": "The Middle", "Id": "s", "ProviderIds": {"Imdb": "TT1442464"}}
+        assert select_series_candidate("Malcolm in the Middle", [same], imdb="tt1442464") is same
+
+    def test_search_tv_episode_does_not_return_the_middle_for_malcolm(self):
+        mock_client = Mock()
+        series_response = Mock()
+        series_response.json.return_value = {"Items": [self.THE_MIDDLE]}
+        mock_client.request.return_value = series_response
+
+        results = search_tv_episode(
+            mock_client,
+            "http://emby.local",
+            "api_key",
+            "Malcolm in the Middle",
+            1,
+            1,
+            year=2000,
+            imdb="tt0212671",
+        )
+
+        assert results == []
+        assert mock_client.request.call_count == 1  # never asked The Middle for its episodes
+
+
+class TestSearchMediaThreadsIdsIntoNameFallback:
+    def test_ids_reach_search_tv_episode(self):
+        from emby_dedupe.api import search as search_mod
+
+        with patch.object(search_mod, "search_tv_episode", return_value=[]) as tv:
+            search_mod.search_media(
+                Mock(),
+                "http://emby.local",
+                "key",
+                name="Malcolm in the Middle",
+                year=2000,
+                imdb="tt0212671",
+                season=1,
+                episode=1,
+                skip_provider_search=True,
+            )
+        assert tv.call_args.kwargs == {
+            "year": 2000,
+            "imdb": "tt0212671",
+            "tmdb": None,
+            "tvdb": None,
+        }

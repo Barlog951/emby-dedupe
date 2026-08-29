@@ -597,11 +597,27 @@ class EmbyChecker:
 
         return None  # No series found via any provider ID
 
-    def _search_by_name(self, name: str, year: int | None, season: int | None, episode: int | None) -> list:
-        """Search for existing media by name with caching."""
+    def _search_by_name(
+        self,
+        name: str,
+        year: int | None,
+        season: int | None,
+        episode: int | None,
+        imdb: str | None = None,
+        tmdb: str | None = None,
+        tvdb: str | None = None,
+    ) -> list:
+        """Search for existing media by name with caching.
+
+        The provider ids are NOT searched again here (that already failed) — they are
+        handed down so a name hit that carries a conflicting id can be rejected.
+        """
         logger.debug(f"Provider ID not found or not provided, searching by name: {name}")
 
-        cache_key = self._make_cache_key(name=name, year=year, season=season, episode=episode, libraries=self.libraries)
+        cache_key = self._make_cache_key(
+            name=name, year=year, season=season, episode=episode, libraries=self.libraries,
+            imdb=imdb, tmdb=tmdb, tvdb=tvdb,
+        )
         existing_items = self._get_from_cache(cache_key)
 
         if existing_items is None:
@@ -613,9 +629,9 @@ class EmbyChecker:
                 api_key=api_key,
                 name=name,
                 year=year,
-                imdb=None,
-                tmdb=None,
-                tvdb=None,
+                imdb=imdb,
+                tmdb=tmdb,
+                tvdb=tvdb,
                 season=season,
                 episode=episode,
                 library_names=self.libraries,
@@ -692,7 +708,8 @@ class EmbyChecker:
         # Fall back to name search only if no provider-based result found
         if existing_items is None and config.name:
             existing_items = self._search_by_name(
-                config.name, config.year, config.season, config.episode
+                config.name, config.year, config.season, config.episode,
+                imdb=config.imdb, tmdb=config.tmdb, tvdb=config.tvdb,
             )
         if not existing_items:
             existing_items = []

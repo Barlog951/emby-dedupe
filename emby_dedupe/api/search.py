@@ -186,6 +186,80 @@ def search_by_provider_id(
         return []
 
 
+# A fuzzy (containment) title match is allowed to disagree with the caller by at most
+# this many years — premiere vs. production year routinely differ by one.
+_FUZZY_YEAR_TOLERANCE = 1
+
+
+def _provider_id_conflicts(
+    series: dict[str, Any], imdb: str | None, tmdb: str | None, tvdb: str | None
+) -> bool:
+    """True when the series carries a DIFFERENT id for a provider the caller supplied.
+
+    The caller's ids were already looked up and did not resolve, so a candidate
+    that carries another id for the same provider is provably a different show.
+    """
+    pids = series.get("ProviderIds") or {}
+    for provider, wanted in iter_provider_ids(imdb, tmdb, tvdb):
+        have = pids.get(provider.capitalize()) or pids.get(provider) or pids.get(provider.upper())
+        if have and str(have).lower() != str(wanted).lower():
+            return True
+    return False
+
+
+def select_series_candidate(
+    series_name: str,
+    series_items: list[dict[str, Any]],
+    *,
+    year: int | None = None,
+    imdb: str | None = None,
+    tmdb: str | None = None,
+    tvdb: str | None = None,
+) -> dict[str, Any] | None:
+    """Pick the Emby series that really is ``series_name`` from a SearchTerm result.
+
+    Emby's SearchTerm is a substring search and ``titles_match`` accepts containment,
+    so "Malcolm in the Middle" happily matched the unrelated show "The Middle" and
+    149 of 151 episodes of a season pack were dropped as "duplicates" (2026-08-29).
+
+    Rules (deterministic, cheapest first):
+      1. A candidate whose provider id CONFLICTS with a supplied id is never a match.
+      2. An exact normalized title match wins over a containment match.
+      3. A containment-only match is rejected when both years are known and differ by
+         more than ``_FUZZY_YEAR_TOLERANCE``.
+    """
+    exact = None
+    fuzzy = None
+    for series in series_items:
+        candidate_name = series.get("Name", "")
+        if not titles_match(series_name, candidate_name):
+            continue
+        if _provider_id_conflicts(series, imdb, tmdb, tvdb):
+            logger.debug(
+                f"Rejecting series '{candidate_name}' for '{series_name}': provider id conflict "
+                f"({series.get('ProviderIds')})"
+            )
+            continue
+        if titles_match(series_name, candidate_name, fuzzy=False):
+            if exact is None:
+                exact = series
+            continue
+        candidate_year = series.get("ProductionYear")
+        if (
+            year is not None
+            and candidate_year is not None
+            and abs(int(candidate_year) - int(year)) > _FUZZY_YEAR_TOLERANCE
+        ):
+            logger.debug(
+                f"Rejecting fuzzy series match '{candidate_name}' ({candidate_year}) for "
+                f"'{series_name}' ({year}): year conflict"
+            )
+            continue
+        if fuzzy is None:
+            fuzzy = series
+    return exact or fuzzy
+
+
 def search_tv_episode(
     client: httpx.Client,
     host: str,
@@ -194,6 +268,11 @@ def search_tv_episode(
     season: int,
     episode: int,
     library_ids: list[str] | None = None,
+    *,
+    year: int | None = None,
+    imdb: str | None = None,
+    tmdb: str | None = None,
+    tvdb: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search for a TV episode by series, season, and episode number.
 
@@ -205,6 +284,10 @@ def search_tv_episode(
         season: Season number.
         episode: Episode number.
         library_ids: Optional list of library IDs to search in.
+        year: Series year known to the caller; a containment-only title match that
+            disagrees with it is rejected (see ``select_series_candidate``).
+        imdb/tmdb/tvdb: Provider ids known to the caller; a candidate carrying a
+            different id for the same provider is rejected.
 
     Returns:
         List of matching episodes.
@@ -215,7 +298,7 @@ def search_tv_episode(
         "SearchTerm": series_name,
         "IncludeItemTypes": "Series",
         "Recursive": "true",
-        "Fields": "ProviderIds",
+        "Fields": "ProviderIds,ProductionYear",
     }
 
     # Note: Emby API doesn't support comma-separated ParentId in search
@@ -230,12 +313,10 @@ def search_tv_episode(
         data = response.json()
         series_items = data.get("Items", [])
 
-        # Find matching series
-        matching_series = None
-        for series in series_items:
-            if titles_match(series_name, series.get("Name", "")):
-                matching_series = series
-                break
+        # Find matching series (exact title preferred; provider-id / year conflicts rejected)
+        matching_series = select_series_candidate(
+            series_name, series_items, year=year, imdb=imdb, tmdb=tmdb, tvdb=tvdb
+        )
 
         if not matching_series:
             logger.debug(f"Series '{series_name}' not found")
@@ -426,6 +507,10 @@ def _search_by_name_with_type(
     season: int | None,
     episode: int | None,
     library_ids: list[str] | None,
+    *,
+    imdb: str | None = None,
+    tmdb: str | None = None,
+    tvdb: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search by name with appropriate media type.
 
@@ -444,7 +529,10 @@ def _search_by_name_with_type(
     """
     if season is not None and episode is not None:
         # TV episode search
-        return search_tv_episode(client, host, api_key, name, season, episode, library_ids)
+        return search_tv_episode(
+            client, host, api_key, name, season, episode, library_ids,
+            year=year, imdb=imdb, tmdb=tmdb, tvdb=tvdb,
+        )
     elif season is not None:
         # Search for series, then filter by season
         return search_by_name(client, host, api_key, name, year, "Series", library_ids)
@@ -504,7 +592,8 @@ def search_media(
     # Search by name if no provider ID results
     if name:
         return _search_by_name_with_type(
-            client, host, api_key, name, year, season, episode, library_ids
+            client, host, api_key, name, year, season, episode, library_ids,
+            imdb=imdb, tmdb=tmdb, tvdb=tvdb,
         )
 
     return []
