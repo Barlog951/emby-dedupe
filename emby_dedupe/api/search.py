@@ -186,8 +186,11 @@ def search_by_provider_id(
         return []
 
 
-# A fuzzy (containment) title match is allowed to disagree with the caller by at most
-# this many years — premiere vs. production year routinely differ by one.
+# A fuzzy (containment) title match may not name a series that premiered LATER than the
+# caller's year by more than this. Callers pass the year of the item they hold — for a TV
+# episode that is the episode's air year, which is legitimately far AFTER the series'
+# premiere, so the check is one-sided: premiere-after-episode is impossible, the reverse
+# is normal. Premiere vs. production year routinely differ by one, hence the slack.
 _FUZZY_YEAR_TOLERANCE = 1
 
 
@@ -225,8 +228,9 @@ def select_series_candidate(
     Rules (deterministic, cheapest first):
       1. A candidate whose provider id CONFLICTS with a supplied id is never a match.
       2. An exact normalized title match wins over a containment match.
-      3. A containment-only match is rejected when both years are known and differ by
-         more than ``_FUZZY_YEAR_TOLERANCE``.
+      3. A containment-only match is rejected when the candidate premiered more than
+         ``_FUZZY_YEAR_TOLERANCE`` years AFTER the caller's year (a series cannot start
+         after one of its own episodes aired; the caller's year may legitimately be later).
     """
     exact = None
     fuzzy = None
@@ -248,7 +252,7 @@ def select_series_candidate(
         if (
             year is not None
             and candidate_year is not None
-            and abs(int(candidate_year) - int(year)) > _FUZZY_YEAR_TOLERANCE
+            and int(candidate_year) - int(year) > _FUZZY_YEAR_TOLERANCE
         ):
             logger.debug(
                 f"Rejecting fuzzy series match '{candidate_name}' ({candidate_year}) for "

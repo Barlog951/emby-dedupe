@@ -338,12 +338,15 @@ class TestSelectSeriesCandidate:
         assert select_series_candidate("Daredevil", [candidate], year=2015) is candidate
         assert select_series_candidate("Daredevil", [candidate]) is candidate
 
-    def test_year_tolerance_of_one(self):
+    def test_year_check_is_one_sided_with_tolerance_of_one(self):
+        """Callers pass the EPISODE's year: a 2018 episode of a 2015 show is normal,
+        a show that premiered 2 years AFTER the episode aired cannot be its series."""
         from emby_dedupe.api.search import select_series_candidate
 
         candidate = {"Name": "Marvel's Daredevil", "Id": "d", "ProductionYear": 2015}
-        assert select_series_candidate("Daredevil", [candidate], year=2016) is candidate
-        assert select_series_candidate("Daredevil", [candidate], year=2017) is None
+        assert select_series_candidate("Daredevil", [candidate], year=2018) is candidate
+        assert select_series_candidate("Daredevil", [candidate], year=2014) is candidate
+        assert select_series_candidate("Daredevil", [candidate], year=2013) is None
 
     def test_exact_title_preferred_over_containment(self):
         from emby_dedupe.api.search import select_series_candidate
